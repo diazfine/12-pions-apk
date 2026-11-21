@@ -29,6 +29,9 @@ export class AuthError extends Error {
   }
 }
 
+let nativeGoogleInitialized = false;
+const PLACEHOLDER_FACEBOOK_APP_ID = '123456789012345';
+
 export function mapFirebaseAuthError(err: unknown): AuthError {
   if (err instanceof AuthError) return err;
 
@@ -36,13 +39,48 @@ export function mapFirebaseAuthError(err: unknown): AuthError {
     err && typeof err === 'object' && 'code' in err
       ? String((err as { code?: unknown }).code || '')
       : '';
+  const errorStr =
+    err && typeof err === 'object' && 'error' in err
+      ? String((err as { error?: unknown }).error || '')
+      : '';
   const rawMessage =
     err instanceof Error ? err.message : typeof err === 'string' ? err : 'Erreur inconnue';
+  const combined = `${code} ${errorStr} ${rawMessage}`;
 
-  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+  if (
+    code === 'auth/popup-closed-by-user' ||
+    code === 'auth/cancelled-popup-request' ||
+    code === '12501' ||
+    /\b12501\b/.test(combined) ||
+    /cancel(l)?ed/i.test(combined)
+  ) {
     return new AuthError(
-      code,
+      code || '12501',
       'Connexion Google annulée : la fenêtre de sélection de compte a été fermée.'
+    );
+  }
+  if (code === '10' || /\b10\b/.test(combined) || /DEVELOPER_ERROR/i.test(combined)) {
+    return new AuthError(
+      '10',
+      "Configuration Google Android incomplète (Erreur 10 : ajoutez l'empreinte SHA-1 Android de votre APK dans Firebase Console pour com.pions12.app)."
+    );
+  }
+  if (code === '7' || /\b7\b/.test(code) || /NETWORK_ERROR/i.test(combined)) {
+    return new AuthError(
+      '7',
+      'Connexion réseau impossible avec Google Play Services. Vérifiez votre accès Internet puis réessayez.'
+    );
+  }
+  if (code === '12500' || /\b12500\b/.test(combined)) {
+    return new AuthError(
+      '12500',
+      "Connexion Google impossible (Erreur 12500 : vérifiez Google Play Services et l'e-mail d'assistance dans Firebase Console)."
+    );
+  }
+  if (code === '12502' || /\b12502\b/.test(combined)) {
+    return new AuthError(
+      '12502',
+      'Une connexion Google est déjà en cours. Veuillez patienter.'
     );
   }
   if (code === 'auth/popup-blocked') {
@@ -88,14 +126,18 @@ export async function signInWithNativeGoogle(): Promise<NativeAuthUser> {
   const isNative = Capacitor.isNativePlatform();
 
   if (isNative) {
-    try {
-      await GoogleAuth.initialize({
-        clientId: FIREBASE_WEB_CLIENT_ID,
-        scopes: ['profile', 'email'],
-        grantOfflineAccess: false,
-      });
-    } catch {
-      // Plugin may already be initialized
+    if (!nativeGoogleInitialized) {
+      try {
+        await GoogleAuth.initialize({
+          clientId: FIREBASE_WEB_CLIENT_ID,
+          scopes: ['profile', 'email'],
+          grantOfflineAccess: false,
+        });
+        nativeGoogleInitialized = true;
+      } catch {
+        // Plugin may already be initialized from capacitor.config
+        nativeGoogleInitialized = true;
+      }
     }
 
     try {
@@ -163,6 +205,15 @@ export async function signInWithNativeFacebook(): Promise<NativeAuthUser> {
   const isNative = Capacitor.isNativePlatform();
 
   if (isNative) {
+    const configuredAppId =
+      (Capacitor as unknown as { config?: { plugins?: { FacebookLogin?: { appId?: string } } } })
+        ?.config?.plugins?.FacebookLogin?.appId || PLACEHOLDER_FACEBOOK_APP_ID;
+    if (!configuredAppId || configuredAppId === PLACEHOLDER_FACEBOOK_APP_ID) {
+      throw new AuthError(
+        'auth/provider-not-configured',
+        'La connexion Facebook nécessite votre véritable Meta App ID + Key Hash Android. Utilisez Google pour synchroniser votre compte.'
+      );
+    }
     try {
       const result = await FacebookLogin.login({ permissions: ['email', 'public_profile'] });
       const accessToken = result?.accessToken?.token;
