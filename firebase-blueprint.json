@@ -1,0 +1,217 @@
+{
+  "entities": {
+    "WinLossRecord": {
+      "title": "WinLossRecord",
+      "description": "Win and loss counters for a specific game mode.",
+      "type": "object",
+      "properties": {
+        "wins": {
+          "type": "integer",
+          "description": "Total wins in this mode"
+        },
+        "losses": {
+          "type": "integer",
+          "description": "Total losses in this mode"
+        }
+      },
+      "required": ["wins", "losses"]
+    },
+    "PlayerStats": {
+      "title": "PlayerStats",
+      "description": "Cumulative match statistics and progression counters for 12 PIONS.",
+      "type": "object",
+      "properties": {
+        "gamesPlayed": { "type": "integer" },
+        "gamesWon": { "type": "integer" },
+        "gamesLost": { "type": "integer" },
+        "draws": { "type": "integer" },
+        "currentStreak": { "type": "integer" },
+        "bestStreak": { "type": "integer" },
+        "bestCombo": { "type": "integer" },
+        "totalCaptures": { "type": "integer" },
+        "totalQueens": { "type": "integer" },
+        "vsAiEasy": { "$ref": "#/entities/WinLossRecord" },
+        "vsAiMedium": { "$ref": "#/entities/WinLossRecord" },
+        "vsAiHard": { "$ref": "#/entities/WinLossRecord" },
+        "vsLocal": { "$ref": "#/entities/WinLossRecord" },
+        "vsOnline": { "$ref": "#/entities/WinLossRecord" }
+      },
+      "required": [
+        "gamesPlayed",
+        "gamesWon",
+        "gamesLost",
+        "draws",
+        "currentStreak",
+        "bestStreak",
+        "bestCombo",
+        "totalCaptures",
+        "totalQueens",
+        "vsAiEasy",
+        "vsAiMedium",
+        "vsAiHard",
+        "vsLocal",
+        "vsOnline"
+      ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated player profile, virtual currencies (coins, gems), and progression.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "avatar": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16
+        },
+        "photoUrl": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "flag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16
+        },
+        "countryName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "authProvider": {
+          "type": "string",
+          "enum": ["google"]
+        },
+        "coins": {
+          "type": "integer"
+        },
+        "gems": {
+          "type": "integer"
+        },
+        "level": {
+          "type": "integer"
+        },
+        "xp": {
+          "type": "integer"
+        },
+        "friendCode": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "lastSpinDate": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "lastFreeBonusDate": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "welcomeBonusClaimed": {
+          "type": "boolean"
+        },
+        "googleSyncBonusClaimed": {
+          "type": "boolean"
+        },
+        "equippedBoard": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "equippedPawns": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ownedItems": {
+          "type": "array"
+        },
+        "stats": {
+          "$ref": "#/entities/PlayerStats"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "name",
+        "avatar",
+        "flag",
+        "countryName",
+        "authProvider",
+        "coins",
+        "gems",
+        "level",
+        "xp",
+        "friendCode",
+        "welcomeBonusClaimed",
+        "googleSyncBonusClaimed",
+        "equippedBoard",
+        "equippedPawns",
+        "ownedItems",
+        "stats",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated private PII belonging strictly to the authenticated user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "authProvider": {
+          "type": "string",
+          "enum": ["google"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "authProvider", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Authenticated player profile, coins, gems, cosmetic inventory, and progression stats."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Isolated PII subcollection (info document) accessible only by the verified owner."
+    }
+  }
+}

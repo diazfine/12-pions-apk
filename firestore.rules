@@ -1,0 +1,212 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ─── GLOBAL HARDENED PRIMITIVES ───
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    // ─── VALIDATION BLUEPRINTS ───
+    function isValidWinLossRecord(m) {
+      return m is map
+        && m.keys().hasAll(['wins', 'losses'])
+        && m.keys().hasOnly(['wins', 'losses'])
+        && m.wins is int && m.wins >= 0 && m.wins <= 10000000
+        && m.losses is int && m.losses >= 0 && m.losses <= 10000000;
+    }
+
+    function isValidPlayerStats(s) {
+      return s is map
+        && s.keys().hasAll([
+          'gamesPlayed', 'gamesWon', 'gamesLost', 'draws',
+          'currentStreak', 'bestStreak', 'bestCombo',
+          'totalCaptures', 'totalQueens',
+          'vsAiEasy', 'vsAiMedium', 'vsAiHard', 'vsLocal', 'vsOnline'
+        ])
+        && s.keys().hasOnly([
+          'gamesPlayed', 'gamesWon', 'gamesLost', 'draws',
+          'currentStreak', 'bestStreak', 'bestCombo',
+          'totalCaptures', 'totalQueens',
+          'vsAiEasy', 'vsAiMedium', 'vsAiHard', 'vsLocal', 'vsOnline'
+        ])
+        && s.gamesPlayed is int && s.gamesPlayed >= 0 && s.gamesPlayed <= 10000000
+        && s.gamesWon is int && s.gamesWon >= 0 && s.gamesWon <= 10000000
+        && s.gamesLost is int && s.gamesLost >= 0 && s.gamesLost <= 10000000
+        && s.draws is int && s.draws >= 0 && s.draws <= 10000000
+        && s.currentStreak is int && s.currentStreak >= 0 && s.currentStreak <= 1000000
+        && s.bestStreak is int && s.bestStreak >= 0 && s.bestStreak <= 1000000
+        && s.bestCombo is int && s.bestCombo >= 0 && s.bestCombo <= 1000
+        && s.totalCaptures is int && s.totalCaptures >= 0 && s.totalCaptures <= 100000000
+        && s.totalQueens is int && s.totalQueens >= 0 && s.totalQueens <= 10000000
+        && isValidWinLossRecord(s.vsAiEasy)
+        && isValidWinLossRecord(s.vsAiMedium)
+        && isValidWinLossRecord(s.vsAiHard)
+        && isValidWinLossRecord(s.vsLocal)
+        && isValidWinLossRecord(s.vsOnline);
+    }
+
+    function isValidUserProfile(data) {
+      return data.uid is string
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 30
+        && data.avatar is string && data.avatar.size() >= 1 && data.avatar.size() <= 16
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+        && data.flag is string && data.flag.size() >= 1 && data.flag.size() <= 16
+        && data.countryName is string && data.countryName.size() >= 1 && data.countryName.size() <= 80
+        && data.authProvider is string && data.authProvider == 'google'
+        && data.coins is int && data.coins >= 0 && data.coins <= 100000000
+        && data.gems is int && data.gems >= 0 && data.gems <= 1000000
+        && data.level is int && data.level >= 1 && data.level <= 1000
+        && data.xp is int && data.xp >= 0 && data.xp <= 100000000
+        && data.friendCode is string && data.friendCode.size() >= 4 && data.friendCode.size() <= 24 && data.friendCode.matches('^[A-Z0-9\\-]+$')
+        && (!('lastSpinDate' in data) || (data.lastSpinDate is string && data.lastSpinDate.size() <= 20))
+        && (!('lastFreeBonusDate' in data) || (data.lastFreeBonusDate is string && data.lastFreeBonusDate.size() <= 20))
+        && data.welcomeBonusClaimed is bool
+        && data.googleSyncBonusClaimed is bool
+        && data.equippedBoard is string && data.equippedBoard.size() >= 1 && data.equippedBoard.size() <= 64
+        && data.equippedPawns is string && data.equippedPawns.size() >= 1 && data.equippedPawns.size() <= 64
+        && data.ownedItems is list && data.ownedItems.size() >= 1 && data.ownedItems.size() <= 50
+        && data.ownedItems[0] is string && data.ownedItems[0].size() >= 1 && data.ownedItems[0].size() <= 64
+        && isValidPlayerStats(data.stats)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data) {
+      return data.uid is string
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.authProvider is string && data.authProvider == 'google'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ─── PLAYER PROFILE & PROGRESSION COLLECTION ───
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && incoming().keys().hasAll([
+          'uid', 'name', 'avatar', 'flag', 'countryName', 'authProvider',
+          'coins', 'gems', 'level', 'xp', 'friendCode',
+          'welcomeBonusClaimed', 'googleSyncBonusClaimed',
+          'equippedBoard', 'equippedPawns', 'ownedItems', 'stats',
+          'createdAt', 'updatedAt'
+        ])
+        && incoming().keys().hasOnly([
+          'uid', 'name', 'avatar', 'photoUrl', 'flag', 'countryName', 'authProvider',
+          'coins', 'gems', 'level', 'xp', 'friendCode',
+          'lastSpinDate', 'lastFreeBonusDate',
+          'welcomeBonusClaimed', 'googleSyncBonusClaimed',
+          'equippedBoard', 'equippedPawns', 'ownedItems', 'stats',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidUserProfile(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().authProvider == existing().authProvider
+        && incoming().friendCode == existing().friendCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (!existing().welcomeBonusClaimed || incoming().welcomeBonusClaimed == true)
+        && (!existing().googleSyncBonusClaimed || incoming().googleSyncBonusClaimed == true)
+        && (
+          // Action 1: Profile metadata customization
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'avatar', 'photoUrl', 'flag', 'countryName', 'updatedAt'
+          ])
+          ||
+          // Action 2: Gameplay progression, currency & inventory sync
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'coins', 'gems', 'level', 'xp',
+            'lastSpinDate', 'lastFreeBonusDate',
+            'welcomeBonusClaimed', 'googleSyncBonusClaimed',
+            'equippedBoard', 'equippedPawns', 'ownedItems', 'stats', 'updatedAt'
+          ])
+          ||
+          // Action 3: Combined profile + progression sync
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'avatar', 'photoUrl', 'flag', 'countryName',
+            'coins', 'gems', 'level', 'xp',
+            'lastSpinDate', 'lastFreeBonusDate',
+            'welcomeBonusClaimed', 'googleSyncBonusClaimed',
+            'equippedBoard', 'equippedPawns', 'ownedItems', 'stats', 'updatedAt'
+          ])
+        );
+
+      allow delete: if false;
+
+      // ─── ISOLATED PRIVATE PII SUBCOLLECTION ───
+      match /private/{docId} {
+        allow get: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'info'
+          && isOwner(userId)
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow list: if false;
+
+        allow create: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'info'
+          && isOwner(userId)
+          && incoming().keys().hasAll(['uid', 'email', 'authProvider', 'createdAt', 'updatedAt'])
+          && incoming().keys().hasOnly(['uid', 'email', 'authProvider', 'createdAt', 'updatedAt'])
+          && isValidUserPrivateInfo(incoming())
+          && incoming().uid == userId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && existsAfter(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if isValidId(userId)
+          && isValidId(docId)
+          && docId == 'info'
+          && isOwner(userId)
+          && isValidUserPrivateInfo(incoming())
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'authProvider', 'updatedAt'])
+          && exists(/databases/$(database)/documents/users/$(userId));
+
+        allow delete: if false;
+      }
+    }
+  }
+}
