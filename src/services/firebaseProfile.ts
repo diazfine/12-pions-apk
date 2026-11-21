@@ -15,6 +15,34 @@ const EQUIPPED_BOARD_KEY = 'equipped_board_theme';
 const EQUIPPED_PAWNS_KEY = 'equipped_pawns_skin';
 const OWNED_ITEMS_KEY = 'owned_shop_items';
 
+const uidOperationChain = new Map<string, Promise<unknown>>();
+const confirmedCloudUids = new Set<string>();
+let interactiveAuthDepth = 0;
+
+export function beginInteractiveAuthSync(): void {
+  interactiveAuthDepth++;
+}
+
+export function endInteractiveAuthSync(): void {
+  interactiveAuthDepth = Math.max(0, interactiveAuthDepth - 1);
+}
+
+export function isInteractiveAuthSyncActive(): boolean {
+  return interactiveAuthDepth > 0;
+}
+
+function withUidLock<T>(uid: string, task: () => Promise<T>): Promise<T> {
+  const prev = uidOperationChain.get(uid) || Promise.resolve();
+  const next = prev.catch(() => undefined).then(task);
+  uidOperationChain.set(uid, next);
+  next.finally(() => {
+    if (uidOperationChain.get(uid) === next) {
+      uidOperationChain.delete(uid);
+    }
+  });
+  return next;
+}
+
 interface FirestoreWinLoss {
   wins: number;
   losses: number;
@@ -180,11 +208,12 @@ export async function syncGoogleUserToFirestore(
   localProfile: UserProfile,
   options: { grantFirstTimeBonus: boolean } = { grantFirstTimeBonus: true }
 ): Promise<{ profile: UserProfile; isNewCloudAccount: boolean; bonusCoinsGranted: number }> {
-  const uid = firebaseUser.uid;
-  const userDocPath = `users/${uid}`;
-  const privateDocPath = `users/${uid}/private/info`;
-  const userRef = doc(db, 'users', uid);
-  const privateRef = doc(db, 'users', uid, 'private', 'info');
+  return withUidLock(firebaseUser.uid, async () => {
+    const uid = firebaseUser.uid;
+    const userDocPath = `users/${uid}`;
+    const privateDocPath = `users/${uid}/private/info`;
+    const userRef = doc(db, 'users', uid);
+    const privateRef = doc(db, 'users', uid, 'private', 'info');
 
   let existingSnap;
   try {
@@ -207,6 +236,7 @@ export async function syncGoogleUserToFirestore(
   const googleEmail = firebaseUser.email ? clampStr(firebaseUser.email, 254, '') : '';
 
   if (existingSnap.exists()) {
+    confirmedCloudUids.add(uid);
     const data = existingSnap.data();
     const alreadyClaimedSyncBonus = Boolean(data.googleSyncBonusClaimed);
     const shouldGrantSyncBonus = options.grantFirstTimeBonus && !alreadyClaimedSyncBonus;
@@ -393,12 +423,14 @@ export async function syncGoogleUserToFirestore(
     googleSyncBonusClaimed: true,
   };
 
+  confirmedCloudUids.add(uid);
   saveLocalProfileOnly(createdProfile);
   return {
     profile: createdProfile,
     isNewCloudAccount: true,
     bonusCoinsGranted,
   };
+  });
 }
 
 /**
@@ -428,50 +460,187 @@ export async function persistProgressToFirestore(
   }
 
   const uid = currentUser.uid;
-  const userDocPath = `users/${uid}`;
-  const userRef = doc(db, 'users', uid);
-  const shop = getLocalShopState();
-  const stats = sanitizeStats(explicitStats || loadUserStats());
+  return withUidLock(uid, async () => {
+    const userDocPath = `users/${uid}`;
+    const userRef = doc(db, 'users', uid);
 
-  const updatePayload: Record<string, unknown> = {
-    name: clampStr(profile.name, 30, currentUser.displayName || 'Champion_Google'),
-    avatar: clampStr(profile.avatar, 16, '👑'),
-    flag: clampStr(profile.flag, 16, '🇸🇳'),
-    countryName: clampStr(profile.countryName, 80, 'Sénégal'),
-    coins: clampInt(profile.coins, 0, 100000000, 0),
-    gems: clampInt(profile.gems, 0, 1000000, 10),
-    level: clampInt(profile.level, 1, 1000, 1),
-    xp: clampInt(profile.xp, 0, 100000000, 0),
-    welcomeBonusClaimed: Boolean(profile.welcomeBonusClaimed ?? true),
-    googleSyncBonusClaimed: Boolean(profile.googleSyncBonusClaimed ?? true),
-    equippedBoard: shop.equippedBoard,
-    equippedPawns: shop.equippedPawns,
-    ownedItems: shop.ownedItems,
-    stats,
+    if (!confirmedCloudUids.has(uid)) {
+      try {
+        const snap = await getDoc(userRef);
+        if (!snap.exists()) {
+          // Document not created yet: initialize atomically instead of calling updateDoc on missing doc
+          await syncGoogleUserToFirestoreInternal(currentUser, profile, {
+            grantFirstTimeBonus: false,
+          });
+          return;
+        }
+        confirmedCloudUids.add(uid);
+      } catch (err) {
+        if (isNetworkOfflineError(err)) return;
+        if (isPermissionDeniedError(err)) {
+          handleFirestoreError(err, OperationType.GET, userDocPath);
+        }
+        return;
+      }
+    }
+
+    const shop = getLocalShopState();
+    const stats = sanitizeStats(explicitStats || loadUserStats());
+
+    const updatePayload: Record<string, unknown> = {
+      name: clampStr(profile.name, 30, currentUser.displayName || 'Champion_Google'),
+      avatar: clampStr(profile.avatar, 16, '👑'),
+      flag: clampStr(profile.flag, 16, '🇸🇳'),
+      countryName: clampStr(profile.countryName, 80, 'Sénégal'),
+      coins: clampInt(profile.coins, 0, 100000000, 0),
+      gems: clampInt(profile.gems, 0, 1000000, 10),
+      level: clampInt(profile.level, 1, 1000, 1),
+      xp: clampInt(profile.xp, 0, 100000000, 0),
+      welcomeBonusClaimed: Boolean(profile.welcomeBonusClaimed ?? true),
+      googleSyncBonusClaimed: Boolean(profile.googleSyncBonusClaimed ?? true),
+      equippedBoard: shop.equippedBoard,
+      equippedPawns: shop.equippedPawns,
+      ownedItems: shop.ownedItems,
+      stats,
+      updatedAt: serverTimestamp(),
+    };
+
+    const photoUrl = sanitizePhotoUrl(profile.customPhoto || currentUser.photoURL);
+    if (photoUrl) {
+      updatePayload.photoUrl = photoUrl;
+    }
+    if (typeof profile.lastSpinDate === 'string' && profile.lastSpinDate.trim()) {
+      updatePayload.lastSpinDate = clampStr(profile.lastSpinDate, 20, '');
+    }
+    if (typeof profile.lastFreeBonusDate === 'string' && profile.lastFreeBonusDate.trim()) {
+      updatePayload.lastFreeBonusDate = clampStr(profile.lastFreeBonusDate, 20, '');
+    }
+
+    try {
+      await updateDoc(userRef, updatePayload);
+    } catch (err) {
+      if (isNetworkOfflineError(err)) {
+        // Allow local offline play cleanly; cloud sync will catch up on reconnect
+        return;
+      }
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.UPDATE, userDocPath);
+      }
+      console.warn('Firestore progress sync warning:', err);
+    }
+  });
+}
+
+async function syncGoogleUserToFirestoreInternal(
+  firebaseUser: FirebaseUser,
+  localProfile: UserProfile,
+  options: { grantFirstTimeBonus: boolean }
+): Promise<{ profile: UserProfile; isNewCloudAccount: boolean; bonusCoinsGranted: number }> {
+  const uid = firebaseUser.uid;
+  const userDocPath = `users/${uid}`;
+  const privateDocPath = `users/${uid}/private/info`;
+  const userRef = doc(db, 'users', uid);
+  const privateRef = doc(db, 'users', uid, 'private', 'info');
+
+  const localStats = loadUserStats();
+  const localShop = getLocalShopState();
+  const googleDisplayName = clampStr(
+    firebaseUser.displayName || localProfile.name,
+    30,
+    'Champion_Google'
+  );
+  const googlePhotoUrl = sanitizePhotoUrl(firebaseUser.photoURL);
+  const googleEmail = firebaseUser.email ? clampStr(firebaseUser.email, 254, '') : '';
+
+  const canGrantBonus = options.grantFirstTimeBonus && !localProfile.googleSyncBonusClaimed;
+  const bonusCoinsGranted = canGrantBonus ? 1000 : 0;
+  const bonusGemsGranted = canGrantBonus && !localProfile.welcomeBonusClaimed ? 10 : 0;
+
+  const initialCoins = clampInt(localProfile.coins, 0, 100000000, 2500) + bonusCoinsGranted;
+  const initialGems = clampInt(localProfile.gems, 0, 1000000, 10) + bonusGemsGranted;
+  const initialLevel = clampInt(localProfile.level, 1, 1000, 1);
+  const initialXp = clampInt(localProfile.xp, 0, 100000000, 150);
+  const friendCode = sanitizeFriendCode(localProfile.friendCode);
+  const avatar = clampStr(localProfile.avatar, 16, '👑');
+  const flag = clampStr(localProfile.flag, 16, '🇸🇳');
+  const countryName = clampStr(localProfile.countryName, 80, 'Sénégal');
+  const cleanStats = sanitizeStats(localStats);
+
+  const newUserDoc: Record<string, unknown> = {
+    uid,
+    name: googleDisplayName,
+    avatar,
+    flag,
+    countryName,
+    authProvider: 'google',
+    coins: initialCoins,
+    gems: initialGems,
+    level: initialLevel,
+    xp: initialXp,
+    friendCode,
+    welcomeBonusClaimed: true,
+    googleSyncBonusClaimed: true,
+    equippedBoard: localShop.equippedBoard,
+    equippedPawns: localShop.equippedPawns,
+    ownedItems: localShop.ownedItems,
+    stats: cleanStats,
+    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
 
-  const photoUrl = sanitizePhotoUrl(profile.customPhoto || currentUser.photoURL);
-  if (photoUrl) {
-    updatePayload.photoUrl = photoUrl;
+  if (googlePhotoUrl) {
+    newUserDoc.photoUrl = googlePhotoUrl;
   }
-  if (typeof profile.lastSpinDate === 'string' && profile.lastSpinDate.trim()) {
-    updatePayload.lastSpinDate = clampStr(profile.lastSpinDate, 20, '');
+  if (typeof localProfile.lastSpinDate === 'string' && localProfile.lastSpinDate.trim()) {
+    newUserDoc.lastSpinDate = clampStr(localProfile.lastSpinDate, 20, '');
   }
-  if (typeof profile.lastFreeBonusDate === 'string' && profile.lastFreeBonusDate.trim()) {
-    updatePayload.lastFreeBonusDate = clampStr(profile.lastFreeBonusDate, 20, '');
+  if (typeof localProfile.lastFreeBonusDate === 'string' && localProfile.lastFreeBonusDate.trim()) {
+    newUserDoc.lastFreeBonusDate = clampStr(localProfile.lastFreeBonusDate, 20, '');
   }
 
   try {
-    await updateDoc(userRef, updatePayload);
+    const batch = writeBatch(db);
+    batch.set(userRef, newUserDoc);
+    if (googleEmail) {
+      batch.set(privateRef, {
+        uid,
+        email: googleEmail,
+        authProvider: 'google',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
   } catch (err) {
-    if (isNetworkOfflineError(err)) {
-      // Allow local offline play cleanly; cloud sync will catch up on reconnect
-      return;
-    }
     if (isPermissionDeniedError(err)) {
-      handleFirestoreError(err, OperationType.UPDATE, userDocPath);
+      handleFirestoreError(err, OperationType.CREATE, userDocPath);
     }
-    console.warn('Firestore progress sync warning:', err);
+    throw err;
   }
+
+  confirmedCloudUids.add(uid);
+  const createdProfile: UserProfile = {
+    ...localProfile,
+    uid,
+    name: googleDisplayName,
+    avatar,
+    customPhoto: googlePhotoUrl || localProfile.customPhoto,
+    flag,
+    countryName,
+    email: googleEmail || localProfile.email,
+    authProvider: 'google',
+    coins: initialCoins,
+    gems: initialGems,
+    level: initialLevel,
+    xp: initialXp,
+    friendCode,
+    welcomeBonusClaimed: true,
+    googleSyncBonusClaimed: true,
+  };
+  saveLocalProfileOnly(createdProfile);
+  return {
+    profile: createdProfile,
+    isNewCloudAccount: true,
+    bonusCoinsGranted,
+  };
 }
