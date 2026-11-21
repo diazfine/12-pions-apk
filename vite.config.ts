@@ -249,7 +249,7 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,jpg,jpeg,woff,woff2}'],
           globIgnores: ['**/assets/aistudio/**', '**/*.map', '**/Screen_Recording*'],
           navigateFallback: '/index.html',
-          maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MB max for cacheable assets
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024, // 8 MB max for cacheable assets
         },
         devOptions: {
           enabled: false,
