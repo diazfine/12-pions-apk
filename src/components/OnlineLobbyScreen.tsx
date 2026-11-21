@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Copy, Check, Users, Sparkles, Wifi, Play, AlertCircle } from 'lucide-react';
 import { PieceColor } from '../types';
 import { useTranslation } from '../i18n/useTranslation';
+import { copyTextSafely, getPublicAppUrl, isNativeCapacitorApp } from '../utils/serverConfig';
 
 interface OnlineLobbyScreenProps {
   onBack: () => void;
@@ -41,14 +42,17 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     }
   }, []);
 
-  const handleCopyLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}?room=${generatedCode}`;
-    try {
-      navigator.clipboard.writeText(url);
+  const handleCopyLink = async () => {
+    const baseUrl = getPublicAppUrl();
+    const pathPart =
+      typeof window !== 'undefined' && !isNativeCapacitorApp()
+        ? window.location.pathname
+        : '/';
+    const url = `${baseUrl}${pathPart}?room=${generatedCode}`;
+    const ok = await copyTextSafely(url);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
-    } catch {
-      // Clipboard fallback
     }
   };
 
