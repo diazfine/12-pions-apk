@@ -1,3 +1,5 @@
+import { getGameWebSocketUrl } from './serverConfig';
+
 export interface OnlineMessage {
   type:
     | 'CONNECT'
@@ -161,9 +163,7 @@ export class OnlineChannel {
     if (this.isDestroyed) return;
 
     try {
-      const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
-      const wsUrl = `${protocol}//${host}/ws`;
+      const wsUrl = getGameWebSocketUrl();
 
       this.ws = new WebSocket(wsUrl);
 
