@@ -1,3 +1,5 @@
+import { getGameWebSocketUrl } from './serverConfig';
+
 // Socket client abstraction for direct socket.on / socket.off / socket.emit communication
 // With Heartbeat (Ping-Pong), auto-reconnect on micro-cuts (4G/Wi-Fi), and session restoration.
 export type SocketEventHandler = (data: any) => void;
@@ -89,6 +91,7 @@ class GameSocket {
       } catch {}
       this.ws = null;
     }
+    this.isConnecting = false;
     this.connect();
   }
 
@@ -99,9 +102,7 @@ class GameSocket {
     }
     this.isConnecting = true;
     try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      const wsUrl = `${protocol}//${host}/ws`;
+      const wsUrl = getGameWebSocketUrl();
 
       this.ws = new WebSocket(wsUrl);
 
@@ -168,20 +169,22 @@ class GameSocket {
         this.stopHeartbeat();
         this.dispatch('disconnect', {});
         clearTimeout(this.reconnectTimer);
-        // Reconnexion silencieuse immédiate en arrière-plan (400ms)
+        // Reconnexion silencieuse immédiate en arrière-plan (600ms)
         this.reconnectTimer = setTimeout(() => {
           this.connect();
-        }, 400);
+        }, 600);
       };
 
-      this.ws.onerror = () => {
+      this.ws.onerror = (err) => {
         this.isConnecting = false;
         this.stopHeartbeat();
+        this.dispatch('connect_error', { error: err });
       };
     } catch (e) {
       console.error('[GameSocket] init error', e);
       this.isConnecting = false;
       this.stopHeartbeat();
+      this.dispatch('connect_error', { error: e });
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = setTimeout(() => {
         this.connect();
@@ -257,6 +260,12 @@ class GameSocket {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(payload));
     } else {
+      if (event === 'create_room' || event === 'search_match' || event === 'cancel_match' || event === 'register_player') {
+        this.pendingQueue = this.pendingQueue.filter((item) => item?.type !== event);
+      }
+      if (event === 'cancel_match') {
+        this.pendingQueue = this.pendingQueue.filter((item) => item?.type !== 'search_match');
+      }
       this.pendingQueue.push(payload);
       this.connect();
     }
