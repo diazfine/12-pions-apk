@@ -33,6 +33,7 @@ jobs:
         run: |
           if [ ! -f "android/gradlew" ]; then
           rm -rf android
+          npx cap add android
           fi
       - name: Sync Android project
         run: npx cap sync android
