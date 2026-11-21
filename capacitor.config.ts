@@ -28,8 +28,10 @@ const config: CapacitorConfig = {
     },
     GoogleAuth: {
       scopes: ['profile', 'email'],
+      clientId: '847231920694-h7jrk7nhkq8mdgj3mettu2ome8m9l3t8.apps.googleusercontent.com',
       serverClientId: '847231920694-h7jrk7nhkq8mdgj3mettu2ome8m9l3t8.apps.googleusercontent.com',
-      forceCodeForRefreshToken: true,
+      androidClientId: '847231920694-h7jrk7nhkq8mdgj3mettu2ome8m9l3t8.apps.googleusercontent.com',
+      forceCodeForRefreshToken: false,
     },
     FacebookLogin: {
       appId: '123456789012345',
