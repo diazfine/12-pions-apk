@@ -18,6 +18,7 @@ import {
   Film,
 } from 'lucide-react';
 import { useTranslation } from '../i18n/useTranslation';
+import { copyTextSafely, getPublicAppUrl } from '../utils/serverConfig';
 
 interface PromoVideoModalProps {
   isOpen: boolean;
@@ -809,10 +810,10 @@ export const PromoVideoModal: React.FC<PromoVideoModalProps> = ({
   };
 
   // Copy promotional ad caption
-  const handleCopyCaption = () => {
-    const originUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const handleCopyCaption = async () => {
+    const originUrl = getPublicAppUrl();
     const caption = `${t('promoShareCaptionText', '👑 12 PIONS - Le Grand Classique Africain Réinventé !')}${originUrl ? `\n\n👉 ${originUrl}` : ''}`;
-    navigator.clipboard.writeText(caption);
+    await copyTextSafely(caption);
     setCopiedCaption(true);
     setTimeout(() => setCopiedCaption(false), 2000);
     onShowToast(t('promoCaptionCopiedToast', '📋 Texte publicitaire copié dans le presse-papier !'));
