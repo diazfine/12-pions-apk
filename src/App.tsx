@@ -105,7 +105,7 @@ import { AuthOnboardingModal } from './components/AuthOnboardingModal';
 import { getSessionToken, saveSessionToken } from './utils/nativeAuth';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, testFirestoreConnection } from './firebase';
-import { loadCloudProfileForUser } from './services/firebaseProfile';
+import { isInteractiveAuthSyncActive, loadCloudProfileForUser } from './services/firebaseProfile';
 import { StatusBar } from '@capacitor/status-bar';
 import { Capacitor } from '@capacitor/core';
 import { TranslationProvider, getSavedOrDeviceLanguage, formatNumber, formatDigits } from './i18n';
@@ -609,7 +609,7 @@ export default function App() {
     // 3. Test Firestore connectivity & restore signed-in Google user profile from Cloud
     void testFirestoreConnection();
     const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
-      if (!fbUser || !fbUser.emailVerified) return;
+      if (!fbUser || !fbUser.emailVerified || isInteractiveAuthSyncActive()) return;
       try {
         const cloudProfile = await loadCloudProfileForUser(fbUser, userProfileRef.current);
         setUserProfile(cloudProfile);
