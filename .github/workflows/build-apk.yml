@@ -32,7 +32,7 @@ jobs:
       - name: Add Android platform
         run: |
           if [ ! -f "android/gradlew" ]; then
-          npx cap add android --force
+          rm -rf android
           fi
       - name: Sync Android project
         run: npx cap sync android
