@@ -8,6 +8,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { useTranslation } from '../i18n/useTranslation';
+import { copyTextSafely, getPublicAppUrl } from '../utils/serverConfig';
 
 interface ShareSocialModalProps {
   isOpen: boolean;
@@ -100,22 +101,18 @@ export const ShareSocialModal: React.FC<ShareSocialModalProps> = ({
 
   if (!isOpen) return null;
 
-  const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://12pions.app';
+  const appUrl = getPublicAppUrl();
   const shareText = `👑 ${t.shareMessageText || 'Rejoins-moi sur 12 PIONS - Jeu de Stratégie Royal ! Affronte-moi avec mon code joueur :'} ${userFriendCode} ! ${t.play || 'Joue dès maintenant'} : ${appUrl}`;
   const encodedText = encodeURIComponent(shareText);
   const encodedUrl = encodeURIComponent(appUrl);
 
   const handleCopyLink = async () => {
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(shareText);
-        setCopied(true);
-        onShowToast(t.shareCopied || 'Lien copié dans le presse-papier !');
-        setTimeout(() => setCopied(false), 3000);
-      } else {
-        onShowToast(t.toastClipboardUnavailable || 'Presse-papier non disponible.');
-      }
-    } catch {
+    const ok = await copyTextSafely(shareText);
+    if (ok) {
+      setCopied(true);
+      onShowToast(t.shareCopied || 'Lien copié dans le presse-papier !');
+      setTimeout(() => setCopied(false), 3000);
+    } else {
       onShowToast(t.toastLinkCopyFailed || 'Impossible de copier le lien.');
     }
   };
