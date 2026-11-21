@@ -1,4 +1,4 @@
-name: Build 12 PIONS APK
+name: Version 12 PIONS APK
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           java-version: '17'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build web app
         run: npm run build
