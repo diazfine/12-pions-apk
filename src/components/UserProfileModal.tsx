@@ -26,7 +26,11 @@ import {
   signOutAllAuth,
   saveSessionToken,
 } from '../utils/nativeAuth';
-import { syncGoogleUserToFirestore } from '../services/firebaseProfile';
+import {
+  beginInteractiveAuthSync,
+  endInteractiveAuthSync,
+  syncGoogleUserToFirestore,
+} from '../services/firebaseProfile';
 import {
   syncWithGameCenter,
   syncWithGooglePlayGames,
@@ -215,6 +219,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const handleSyncGoogle = async () => {
     if (isSyncingAuth) return;
     setIsSyncingAuth(true);
+    beginInteractiveAuthSync();
     try {
       const gUser = await signInWithNativeGoogle();
       if (!gUser.firebaseUser) {
@@ -268,6 +273,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           : 'Connexion Google annulée ou échouée. Aucun compte synchronisé.';
       onShowToast(errMsg);
     } finally {
+      endInteractiveAuthSync();
       setIsSyncingAuth(false);
     }
   };

@@ -8,7 +8,11 @@ import {
   signInWithEmail,
   saveSessionToken,
 } from '../utils/nativeAuth';
-import { syncGoogleUserToFirestore } from '../services/firebaseProfile';
+import {
+  beginInteractiveAuthSync,
+  endInteractiveAuthSync,
+  syncGoogleUserToFirestore,
+} from '../services/firebaseProfile';
 import { TermsModal } from './TermsModal';
 
 interface AuthOnboardingModalProps {
@@ -80,6 +84,7 @@ export const AuthOnboardingModal: React.FC<AuthOnboardingModalProps> = ({
     setAuthError(null);
     setIsLoading(true);
     setStatusMessage(t('connectingGoogle', 'Connexion sécurisée avec Google...'));
+    beginInteractiveAuthSync();
 
     try {
       const user = await signInWithNativeGoogle();
@@ -124,6 +129,8 @@ export const AuthOnboardingModal: React.FC<AuthOnboardingModalProps> = ({
           ? err.message
           : 'La connexion Google a échoué ou a été annulée. Aucun compte n’a été synchronisé.'
       );
+    } finally {
+      endInteractiveAuthSync();
     }
   };
 
