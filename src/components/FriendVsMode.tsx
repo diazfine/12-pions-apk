@@ -13,6 +13,7 @@ import {
 } from '../utils/gameLogic';
 import { sound } from '../utils/audio';
 import { socket } from '../utils/gameSocket';
+import { copyTextSafely, getPublicAppUrl, isNativeCapacitorApp } from '../utils/serverConfig';
 import { recordGameResult } from '../utils/statsStorage';
 import { getOrCreateUserProfile, saveUserProfile } from '../utils/userProfile';
 import { Translations, getTranslations } from '../utils/translations';
@@ -261,6 +262,10 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
       setSearchTimer((prev) => prev + 1);
     }, 1000);
 
+    if (!socket.connected) {
+      socket.reconnectImmediate();
+    }
+
     socket.emit('search_match', {
       preferredColor: 'random',
       playerId: userProfile.friendCode || userProfile.id,
@@ -294,8 +299,23 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
   // Status & timers
   const [timerSec, setTimerSec] = useState<number>(30);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isCreatingRoom, setIsCreatingRoom] = useState<boolean>(false);
+  const [isJoiningRoom, setIsJoiningRoom] = useState<boolean>(false);
+  const createRoomTimeoutRef = useRef<number | null>(null);
+  const joinRoomTimeoutRef = useRef<number | null>(null);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+
+  const clearRoomActionTimers = () => {
+    if (createRoomTimeoutRef.current !== null) {
+      window.clearTimeout(createRoomTimeoutRef.current);
+      createRoomTimeoutRef.current = null;
+    }
+    if (joinRoomTimeoutRef.current !== null) {
+      window.clearTimeout(joinRoomTimeoutRef.current);
+      joinRoomTimeoutRef.current = null;
+    }
+  };
 
   const boardRef = useRef<Board>(board);
   boardRef.current = board;
@@ -1023,6 +1043,10 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
   // ─── ÉCOUTEURS WEBSOCKET ───
   useEffect(() => {
     const onRoomCreated = (data: any) => {
+      clearRoomActionTimers();
+      setIsCreatingRoom(false);
+      setIsJoiningRoom(false);
+      setErrorMessage(null);
       const code = String(data.roomId || data.code || '').trim();
       if (code) {
         setRoomCode(code);
@@ -1051,6 +1075,9 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
     };
 
     const onMatchFound = (data: any) => {
+      clearRoomActionTimers();
+      setIsCreatingRoom(false);
+      setIsJoiningRoom(false);
       const isBot = Boolean(
         data.isBotMatch === true ||
         data.payload?.isBotMatch === true ||
@@ -1133,6 +1160,10 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
     };
 
     const onStartMatch = (data: any) => {
+      clearRoomActionTimers();
+      setIsCreatingRoom(false);
+      setIsJoiningRoom(false);
+      setErrorMessage(null);
       const isBot = Boolean(
         data.isBotMatch === true ||
         data.payload?.isBotMatch === true ||
@@ -1704,6 +1735,9 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
     };
 
     const onJoinError = (data: any) => {
+      clearRoomActionTimers();
+      setIsCreatingRoom(false);
+      setIsJoiningRoom(false);
       setErrorMessage(
         data.message || tRef.current('toastWrongCode', 'Code incorrect. Veuillez recontrôler le code.')
       );
@@ -1843,16 +1877,25 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
       socket.off('chat_message', onChatMessage);
       socket.off('CHAT_MESSAGE', onChatMessage);
       socket.off('JOIN_ERROR', onJoinError);
+      clearRoomActionTimers();
     };
   }, []);
 
   // Actions utilisateur
   const handleCreateRoom = () => {
+    if (isCreatingRoom) return;
+    clearRoomActionTimers();
     setErrorMessage(null);
+    setIsCreatingRoom(true);
     setRole('host');
     const initialCol: PieceColor = hostColorPref === 'red' ? 'red' : 'green';
     setMyColor(initialCol);
     myColorRef.current = initialCol;
+
+    if (!socket.connected) {
+      socket.reconnectImmediate();
+    }
+
     socket.emit('create_room', {
       role: 'host',
       preferredColor: hostColorPref,
@@ -1863,18 +1906,36 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
       customPhoto: userProfile.customPhoto,
       flag: userProfile.flag,
     });
+
+    createRoomTimeoutRef.current = window.setTimeout(() => {
+      setIsCreatingRoom(false);
+      setErrorMessage(
+        t(
+          'serverConnectionTimeout',
+          'Impossible de joindre le serveur de jeu. Vérifiez votre connexion Internet puis réessayez.'
+        )
+      );
+    }, 8000);
   };
 
   const handleJoinRoom = () => {
+    if (isJoiningRoom) return;
     const clean = inputCode.trim().replace(/[^0-9]/g, '');
     if (clean.length < 4) {
       setErrorMessage(t('toastInvalidRoomCode', 'Veuillez entrer un code à 6 chiffres valide (ex: 123456).'));
       return;
     }
+    clearRoomActionTimers();
     setErrorMessage(null);
+    setIsJoiningRoom(true);
     setRole('guest');
     setMyColor('red');
     setRoomCode(clean);
+
+    if (!socket.connected) {
+      socket.reconnectImmediate();
+    }
+
     socket.emit('join_room', {
       roomId: clean,
       role: 'guest',
@@ -1885,6 +1946,16 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
       customPhoto: userProfile.customPhoto,
       flag: userProfile.flag,
     });
+
+    joinRoomTimeoutRef.current = window.setTimeout(() => {
+      setIsJoiningRoom(false);
+      setErrorMessage(
+        t(
+          'serverConnectionTimeout',
+          'Impossible de joindre le serveur de jeu. Vérifiez votre connexion Internet puis réessayez.'
+        )
+      );
+    }, 8000);
   };
 
   // 🎯 ABANDON EN COURS DE MATCH : LE JOUEUR QUI QUITTE PERD PAR FORFAIT
@@ -2284,18 +2355,27 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
     }
   };
 
-  const handleCopyCode = () => {
+  const getRoomShareUrl = (code: string) => {
+    const baseUrl = getPublicAppUrl();
+    const pathPart =
+      typeof window !== 'undefined' && !isNativeCapacitorApp()
+        ? window.location.pathname
+        : '/';
+    return `${baseUrl}${pathPart}?room=${code}`;
+  };
+
+  const handleCopyCode = async () => {
     if (!roomCode) return;
-    navigator.clipboard.writeText(roomCode);
+    await copyTextSafely(roomCode);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
     if (onShowToast) onShowToast(t('toastCodeCopied', 'Code copié dans le presse-papier !'));
   };
 
-  const handleCopyLink = () => {
+  const handleCopyLink = async () => {
     if (!roomCode) return;
-    const url = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
-    navigator.clipboard.writeText(url);
+    const url = getRoomShareUrl(roomCode);
+    await copyTextSafely(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
     if (onShowToast) onShowToast(t('toastDirectLinkCopied', 'Lien direct copié !'));
@@ -2303,7 +2383,7 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
 
   const handleShareWhatsApp = () => {
     if (!roomCode) return;
-    const url = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
+    const url = getRoomShareUrl(roomCode);
     const rawMsg = t(
       'friendShareWhatsApp',
       '👑 12 PIONS - Jeu de Stratégie Royal 👑\nRejoins-moi pour une partie de 12 PIONS ! Mon code de salle est : {code}\nClique ici pour rejoindre directement : {url}'
@@ -2316,9 +2396,7 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
 
   const handleShareFacebook = () => {
     if (!roomCode) return;
-    const url = encodeURIComponent(
-      `${window.location.origin}${window.location.pathname}?room=${roomCode}`
-    );
+    const url = encodeURIComponent(getRoomShareUrl(roomCode));
     const fbMsg = t('friendShareFacebook', '👑 12 PIONS - Rejoins ma partie de jeu avec le code {code} !').replace(
       '{code}',
       roomCode
@@ -3277,15 +3355,15 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
             <button
               type="button"
               onClick={handleJoinRoom}
-              disabled={inputCode.trim().length < 4}
+              disabled={inputCode.trim().length < 4 || isJoiningRoom}
               className={`w-full py-3.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 ${
-                inputCode.trim().length >= 4
+                inputCode.trim().length >= 4 && !isJoiningRoom
                   ? 'bg-gradient-to-r from-emerald-500 via-emerald-400 to-emerald-500 hover:from-emerald-400 text-slate-950 shadow-[0_0_18px_rgba(16,185,129,0.5)]'
-                  : 'bg-emerald-950/60 border border-emerald-800/40 text-emerald-600 cursor-not-allowed opacity-60'
+                  : 'bg-emerald-950/60 border border-emerald-800/40 text-emerald-400 cursor-not-allowed opacity-75'
               }`}
             >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{t('validateCodeBtn', 'Valider le code & Jouer')}</span>
+              {isJoiningRoom ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              <span>{isJoiningRoom ? t('connectingServer', 'Connexion au salon...') : t('validateCodeBtn', 'Valider le code & Jouer')}</span>
             </button>
           </div>
         </div>
@@ -3374,10 +3452,13 @@ export const FriendVsMode: React.FC<FriendVsModeProps> = ({
           <button
             type="button"
             onClick={handleCreateRoom}
-            className="w-full mt-1 py-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all"
+            disabled={isCreatingRoom}
+            className={`w-full mt-1 py-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all ${
+              isCreatingRoom ? 'opacity-80 cursor-wait' : ''
+            }`}
           >
-            <Crown className="w-4 h-4 text-slate-950" />
-            <span>{t('generateRoomBtn', 'Générer le Salon & Obtenir le Code')}</span>
+            {isCreatingRoom ? <RefreshCw className="w-4 h-4 text-slate-950 animate-spin" /> : <Crown className="w-4 h-4 text-slate-950" />}
+            <span>{isCreatingRoom ? t('creatingRoomStatus', 'Création du salon...') : t('generateRoomBtn', 'Générer le Salon & Obtenir le Code')}</span>
           </button>
         </div>
       )}
