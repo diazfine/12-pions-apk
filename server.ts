@@ -46,6 +46,33 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Allow Capacitor Android/iOS WebView and hosted web origins safely
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      const isAllowedOrigin =
+        origin === 'https://localhost' ||
+        origin === 'http://localhost' ||
+        origin === 'capacitor://localhost' ||
+        origin === 'ionic://localhost' ||
+        origin === 'http://localhost:3000' ||
+        origin === 'https://localhost:3000' ||
+        /^https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.run\.app$/i.test(origin) ||
+        (process.env.APP_URL && origin === process.env.APP_URL.replace(/\/+$/, ''));
+      if (isAllowedOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      }
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
